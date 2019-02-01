@@ -101,16 +101,7 @@ def build_graph(len_A):
     optimizer = tf.train.AdamOptimizer(alpha)
     grad_update = optimizer.minimize(cost, var_list=network_params)
 
-    graph_ops = {"s" : s, 
-                 "q_values" : q_values,
-                 "st" : st, 
-                 "target_q_values" : target_q_values,
-                 "reset_target_Q_theta" : reset_target_Q_theta,
-                 "a" : a,
-                 "y" : y,
-                 "grad_update" : grad_update}
-
-    return graph_ops
+    return s,q_values,st,target_q_values,reset_target_Q_theta,a,y,grad_update
 
 
 # Visualization setup (summaries)
@@ -140,15 +131,11 @@ def setup_summaries():
 
 
 
-def evaluation(session, graph_ops, saver):
+def evaluation(session, s,q_values, saver):
     saver.restore(session, ckpt_to_load)
     print "Restored model weights from ", ckpt_to_load
     monitor_env = gym.make(game)
     gym.wrappers.Monitor(monitor_env, eval_dir+"/"+experiment+"/eval")
-
-    # Unpack graph ops
-    s = graph_ops["s"]
-    q_values = graph_ops["q_values"]
 
     # Wrap env with processingWrapper helper class
     env = processingWrapper(monitor_env, memory_length,r_height,r_width)
@@ -169,7 +156,8 @@ def evaluation(session, graph_ops, saver):
     monitor_env.monitor.close()
 
 #implementation of a async Deep-Q learning agent with multiple threads
-def async_Q_learning(thread_num, env, session, graph_ops, len_A, summary_ops, saver):
+def async_Q_learning(thread_num, env, session,s,q_values,st,target_q_values,reset_target_Q_theta,a,y,grad_update
+, len_A, summary_ops, saver):
 
     # Create environment using helper class processingWrapper to abstract image pre-processing for the model
 
@@ -177,17 +165,6 @@ def async_Q_learning(thread_num, env, session, graph_ops, len_A, summary_ops, sa
 
     #Global time
     global TMAX, T
-
-
-    # Unpack graph ops
-    s = graph_ops["s"]
-    q_values = graph_ops["q_values"]
-    st = graph_ops["st"]
-    target_q_values = graph_ops["target_q_values"]
-    reset_target_Q_theta = graph_ops["reset_target_Q_theta"]
-    a = graph_ops["a"]
-    y = graph_ops["y"]
-    grad_update = graph_ops["grad_update"]
 
     summary_placeholders, update_ops, summary_op = summary_ops
 
@@ -271,7 +248,7 @@ def async_Q_learning(thread_num, env, session, graph_ops, len_A, summary_ops, sa
                     session.run(grad_update, feed_dict = {y : y_batch,
                                                           a : a_batch,
                                                           s : s_batch})
-                # Clear gradients
+                # Reset gradients
                 s_batch = []
                 a_batch = []
                 y_batch = []
@@ -285,11 +262,11 @@ def async_Q_learning(thread_num, env, session, graph_ops, len_A, summary_ops, sa
                 stats = [r_e, e_avg_max_Q/float(e_t), epsilon]
                 for i in range(len(stats)):
                     session.run(update_ops[i], feed_dict={summary_placeholders[i]:float(stats[i])})
-                print " \n Thread:", thread_num, "\n T:", T, "\n t:", t, "\n Epsilon:", epsilon, "\n Reward:", r_e, "\n Q_Max: %.4f" % (e_avg_max_Q/float(e_t)), "\n epsilon_decay_rate:", t/float(epsilon_decay_rate), "\n--------------------------------\n"
+                print " \n Thread:", thread_num, "\n T:", T, "\n t:", t, "\n Epsilon:", epsilon, "\n Reward:", r_e, "\n Q_Max: %.4f" % (e_avg_max_Q/float(e_t)), "\n % finished epsilon decay :", t/float(epsilon_decay_rate), "\n--------------------------------\n"
                 break
 
 
-def train(session, graph_ops, len_A, saver):
+def train(session, s,q_values,st,target_q_values,reset_target_Q_theta,a,y,grad_update, len_A, saver):
 
     # Set up game environments (one per thread)
 
@@ -299,18 +276,23 @@ def train(session, graph_ops, len_A, saver):
     summary_op = summary_ops[-1]
 
     # Initialize variables
+
     session.run(tf.global_variables_initializer())
+
     # Initialize target network weights
-    session.run(graph_ops["reset_target_Q_theta"])
+
+    session.run(reset_target_Q_theta)
+
     summary_save_path = summary_dir + "/" + experiment
+
     writer = tf.summary.FileWriter(summary_save_path, session.graph)
     if not os.path.exists(checkpoint_dir):
         os.makedirs(checkpoint_dir)
 
-    # Start n_agents actor-learner training threads
 
-
-    async_Q_learnings = [threading.Thread(target=async_Q_learning, args=(thread_num, envs[thread_num], session, graph_ops, len_A, summary_ops, saver)) for thread_num in range(n_agents)]
+    # Start n_agent training threads
+    async_Q_learnings = [threading.Thread(target=async_Q_learning, args=(thread_num, envs[thread_num], session, s,q_values,st,target_q_values,reset_target_Q_theta,a,y,grad_update, 
+                                        len_A, summary_ops, saver)) for thread_num in range(n_agents)]
     for t in async_Q_learnings:
         t.start()
 
@@ -318,16 +300,21 @@ def train(session, graph_ops, len_A, saver):
     # Show the agents training and write summary statistics
     last_summary_time = 0
     
+
+    #does the rendering
     while True:
         if show_training:
             for env in envs:
                 env.render()
         now = time.time()
+
+        #determines when to write a summary file
         if now - last_summary_time > e_summary:
             summary_str = session.run(summary_op)
             writer.add_summary(summary_str, float(T))
             last_summary_time = now
 
+    #join threads
     for t in async_Q_learnings:
         t.join()
 
@@ -337,9 +324,9 @@ def main(_):
   session = tf.Session(graph=g)
   with g.as_default(), session.as_default():
     keras.backend.set_session(session)
-    graph_ops = build_graph(len_A)
+    s,q_values,st,target_q_values,reset_target_Q_theta,a,y,grad_update = build_graph(len_A)
     saver = tf.train.Saver()
-    train(session, graph_ops, len_A, saver)
+    train(session, s,q_values,st,target_q_values,reset_target_Q_theta,a,y,grad_update, len_A, saver)
 
 if __name__ == "__main__":
   tf.app.run()
