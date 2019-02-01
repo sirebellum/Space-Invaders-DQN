@@ -28,3 +28,7 @@ To come, finished implementation, training and hyperparameter tuning has begun
 ### Testing
 
 To come 
+
+### Citations
+
+The creation of this model was made possible through these resources:
