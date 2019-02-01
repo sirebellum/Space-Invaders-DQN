@@ -1,5 +1,30 @@
 # Space-Invaders-DQN
-An implementation of a DQN to play Space Invaders using TensorFlow and Open-AI gym
+An implementation of an Asych DQN to play Space Invaders using TensorFlow, Keras and Open-AI gym
 
+Written in Python2
 
-//Finishing local implementation 
+### Dependencies
+- Tensorflow
+- Keras
+- Gym
+- numpy
+- Gym-Retro
+
+### Installation
+
+Git clone the repository into a directory of your choosing
+
+### Usage
+
+- Inside of AsyncDQN.py you may specify the number of agents used in training, and whether or not to render each game
+- As well, parameters such as how many episodes per summary saving/ checkpoint saving may also be altered
+- Inside of the directory , run python AsyncDQN.py through shell or other means.
+- If you have python 3 as default, run python2.
+
+### Results
+
+To come, finished implementation, training and hyperparameter tuning has begun
+
+### Testing
+
+To come 
