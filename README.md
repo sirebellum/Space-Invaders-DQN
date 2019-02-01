@@ -32,3 +32,9 @@ To come
 ### Citations
 
 The creation of this model was made possible through these resources:
+
+  - https://www.intel.ai/demystifying-deep-reinforcement-learning/#gs.CR036w2s
+  - http://videolectures.net/rldm2015_silver_reinforcement_learning/
+  - https://arxiv.org/abs/1602.01783
+  - "Hands on Machine Learning with Scikit-Learn & Tensorflow Chapter 16
+  - https://github.com/coreylynch/async-rl
