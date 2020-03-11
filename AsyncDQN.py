@@ -10,17 +10,30 @@ import time
 import gym
 import keras
 from model import build_model
+import io
+import base64
+import glob
+
+import wandb
+# initialize a new wandb run
+wandb.init(project="qualcomm")
+# define hyperparameters
+wandb.config.episodes = 100
+#wandb.config.batch_size = 32
+wandb.config.learning_rate = 2.5e-6
+cumulative_reward = 0
+episode = 0
 
 #environment parameters -- Space Invaders for the Atari
 experiment = "async-dqn-spaceInvaders"
 game = "SpaceInvaders-v0"
 
 #number of agents
-n_agents = 5
+n_agents = 1
 
 #what to resize frames to
-r_width = 84
-r_height = 84
+r_width = 64
+r_height = 32
 
 #Get size/length of the set of Actions, A.
 quick = gym.make(game)
@@ -35,8 +48,8 @@ n = 5
 target_n = 5
 
 #learning rate, discount rate, annealling parameter for epsilon tuning 
-alpha = 0.0001
-gamma = 0.99
+alpha = wandb.config.learning_rate
+gamma = 0.95
 
 #How many time steps it will take for epsilon to decay from its ceiling to its floor.
 #Controls how random the model will act, and for how long
@@ -133,14 +146,14 @@ def setup_summaries():
 
 def evaluation(session, s,q_values, saver):
     saver.restore(session, ckpt_to_load)
-    print "Restored model weights from ", ckpt_to_load
+    print( "Restored model weights from ", ckpt_to_load)
     monitor_env = gym.make(game)
-    gym.wrappers.Monitor(monitor_env, eval_dir+"/"+experiment+"/eval")
+    gym.wrappers.Monitor(monitor_env, './video', force=True)
 
     # Wrap env with processingWrapper helper class
     env = processingWrapper(monitor_env, memory_length,r_height,r_width)
 
-    for i_episode in xrange(num_eval_episodes):
+    for i_episode in xrange(wandb.config.episodes):
         s_t = env.initState()
         r_e = 0
         done = False
@@ -148,11 +161,24 @@ def evaluation(session, s,q_values, saver):
             monitor_env.render()
             readout_t = q_values.eval(session = session, feed_dict = {s : [s_t]})
             action_index = np.argmax(readout_t)
-            print "action",action_index
+            print( "action",action_index)
             s_t1, r_t, done = env.step(action_index)
             s_t = s_t1
             r_e += r_t
-        print r_e
+        evaluate(r_e)
+        print( r_e)
+
+        # render gameplay video
+        if (i %50 == 0):
+          mp4list = glob.glob(eval_dir+"/"+experiment+"/eval/*.mp4")
+          if len(mp4list) > 0:
+            print(len(mp4list))
+            mp4 = mp4list[-1]
+            video = io.open(mp4, 'r+b').read()
+            encoded = base64.b64encode(video)
+            # log gameplay video in wandb
+            wandb.log({"gameplays": wandb.Video(mp4, fps=4, format="gif")})
+
     monitor_env.monitor.close()
 
 #implementation of a async Deep-Q learning agent with multiple threads
@@ -184,13 +210,13 @@ def async_Q_learning(thread_num, env, session,s,q_values,st,target_q_values,rese
     epsilon = 1.0
     epsilon_decay = (epsilon_ceiling - epsilon_floor)/epsilon_decay_rate
 
-    print "Starting thread ", thread_num, "with epsilon floor ", epsilon_floor
+    print( "Starting thread ", thread_num, "with epsilon floor ", epsilon_floor)
 
     # spin up threads sequentially
     time.sleep(3*thread_num)
 
     t = 0
-    while T < TMAX:
+    while episode < wandb.config.episodes:
         # Get initial state
         # s_t -> state at t
         s_t = env.initState()
@@ -222,7 +248,9 @@ def async_Q_learning(thread_num, env, session,s,q_values,st,target_q_values,rese
 
             # Acquire+Store Gradients
             target_readout = target_q_values.eval(session = session, feed_dict = {st : [s_t1]})
-            clipped_r_t = np.clip(r_t, -1, 1)
+            if r_t == 0: clipped_r_t = 0
+            elif r_t > 0: clipped_r_t = 1
+            else: r_t = -5
 
             y_batch.append(clipped_r_t if done else clipped_r_t + gamma * np.max(target_readout) )
             a_batch.append(a_t)
@@ -257,12 +285,26 @@ def async_Q_learning(thread_num, env, session,s,q_values,st,target_q_values,rese
             if t % e_ckpt == 0:
                 saver.save(session, checkpoint_dir+"/"+experiment+".ckpt", global_step = t)
     
-            # Print end of episode stats
+            # print( end of episode stats
             if done:
                 stats = [r_e, e_avg_max_Q/float(e_t), epsilon]
                 for i in range(len(stats)):
                     session.run(update_ops[i], feed_dict={summary_placeholders[i]:float(stats[i])})
-                print " \n Thread:", thread_num, "\n T:", T, "\n t:", t, "\n Epsilon:", epsilon, "\n Reward:", r_e, "\n Q_Max: %.4f" % (e_avg_max_Q/float(e_t)), "\n % finished epsilon decay :", t/float(epsilon_decay_rate), "\n--------------------------------\n"
+                print( " \n Thread:", thread_num, "\n T:", T, "\n t:", t, "\n Epsilon:", epsilon, "\n Reward:", r_e, "\n Q_Max: %.4f" % (e_avg_max_Q/float(e_t)), "\n % finished epsilon decay :", t/float(epsilon_decay_rate), "\n--------------------------------\n")
+
+                evaluate(r_e)
+
+                # render gameplay video
+                if (episode %50 == 0):
+                  mp4list = glob.glob('video/*.mp4')
+                  if len(mp4list) > 0:
+                    print(len(mp4list))
+                    mp4 = mp4list[-1]
+                    video = io.open(mp4, 'r+b').read()
+                    encoded = base64.b64encode(video)
+                    # log gameplay video in wandb
+                    wandb.log({"gameplays": wandb.Video(mp4, fps=4, format="gif")})
+
                 break
 
 
@@ -271,6 +313,7 @@ def train(session, s,q_values,st,target_q_values,reset_target_Q_theta,a,y,grad_u
     # Set up game environments (one per thread)
 
     envs = [gym.make(game) for i in range(n_agents)]
+    gym.wrappers.Monitor(envs[0], './video', force=True)
     
     summary_ops = setup_summaries()
     summary_op = summary_ops[-1]
@@ -318,6 +361,38 @@ def train(session, s,q_values,st,target_q_values,reset_target_Q_theta,a,y,grad_u
     for t in async_Q_learnings:
         t.join()
 
+def evaluate(episodic_reward):
+  '''
+  Takes in the reward for an episode, calculates the cumulative_avg_reward
+    and logs it in wandb. If episode > 100, stops logging scores to wandb.
+    Called after playing each episode. See example below.
+
+  Arguments:
+    episodic_reward - reward received after playing current episode
+  '''
+  global episode
+  global cumulative_reward
+  episode += 1
+  print("Episode: %d"%(episode))
+
+  # your models will be evaluated on 100-episode average reward
+  # therefore, we stop logging after 100 episodes
+  if (episode > 100):
+    print("Scores from episodes > 100 won't be logged in wandb.")
+    return
+
+  # log total reward received in this episode to wandb
+  wandb.log({'episodic_reward': episodic_reward})
+
+  # add reward from this episode to cumulative_reward
+  cumulative_reward += episodic_reward
+
+  # calculate the cumulative_avg_reward
+  # this is the metric your models will be evaluated on
+  cumulative_avg_reward = cumulative_reward/episode
+
+  # log cumulative_avg_reward over all episodes played so far
+  wandb.log({'cumulative_avg_reward': cumulative_avg_reward})
 
 def main(_):
   g = tf.Graph()
