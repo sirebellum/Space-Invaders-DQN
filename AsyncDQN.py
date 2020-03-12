@@ -20,7 +20,7 @@ wandb.init(project="qualcomm")
 # define hyperparameters
 wandb.config.episodes = 100
 wandb.config.batch_size = 32
-wandb.config.learning_rate = 1e-
+wandb.config.learning_rate = 1e-6
 cumulative_reward = 0
 episode = 0
 
@@ -53,7 +53,7 @@ gamma = 0.95
 
 #How many time steps it will take for epsilon to decay from its ceiling to its floor.
 #Controls how random the model will act, and for how long
-epsilon_decay_rate = 200000
+epsilon_decay_rate = 25000
 
 
 #directories & paths for storing / saving / visualization
@@ -275,6 +275,8 @@ def async_Q_learning(thread_num, env, session,s,q_values,st,target_q_values,rese
                         wandb.log({"gameplays": wandb.Video(mp4, fps=4, format="gif")})
 
                 break
+
+    exit()
 
 
 def train(session, s,q_values,st,target_q_values,reset_target_Q_theta,a,y,grad_update, len_A, saver):

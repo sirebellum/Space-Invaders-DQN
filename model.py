@@ -57,7 +57,7 @@ def build_model(n_actions, memory_length, scope,h,w):
             model = Dropout(0.25)(model)
             model = Dense(256, activation='relu')(model)
             model = Dropout(0.25)(model)
-            outputs = Dense(n_actions)(model)
+            outputs = Dense(n_actions, activation='softmax')(model)
      
             m = Model(inputs=inputs, outputs=outputs)
         
