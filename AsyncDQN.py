@@ -20,7 +20,7 @@ wandb.init(project="qualcomm")
 # define hyperparameters
 wandb.config.episodes = 100
 wandb.config.batch_size = 32
-wandb.config.learning_rate = 1e-5
+wandb.config.learning_rate = 1e-
 cumulative_reward = 0
 episode = 0
 
@@ -82,10 +82,9 @@ TMAX = 50000000
 #values of epsilon, and the idea of sampling taken from section 5.1 
 #Asynchronous Methods for Deep Reinforcement Learning, Mnih et al
 def get_epsilon_floor():
-    #epsilon_floor = np.array([.1,.01,.5])
-    #epsilons = np.array([0.4,0.3,0.3])
-    #return np.random.choice(epsilon_floor, 1, p=list(epsilons))[0]
-    return 0.1
+    epsilon_floor = np.array([.1,.01,.5])
+    epsilons = np.array([0.4,0.3,0.3])
+    return np.random.choice(epsilon_floor, 1, p=list(epsilons))[0]
 
 def build_graph(len_A):
     # Create shared deep q network
