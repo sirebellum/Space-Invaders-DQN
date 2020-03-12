@@ -19,8 +19,8 @@ import wandb
 wandb.init(project="qualcomm")
 # define hyperparameters
 wandb.config.episodes = 100
-#wandb.config.batch_size = 32
-wandb.config.learning_rate = 2.5e-6
+wandb.config.batch_size = 32
+wandb.config.learning_rate = 1e-5
 cumulative_reward = 0
 episode = 0
 
@@ -29,11 +29,11 @@ experiment = "async-dqn-spaceInvaders"
 game = "SpaceInvaders-v0"
 
 #number of agents
-n_agents = 1
+n_agents = 8
 
 #what to resize frames to
-r_width = 64
-r_height = 32
+r_width = 84
+r_height = 84
 
 #Get size/length of the set of Actions, A.
 quick = gym.make(game)
@@ -44,8 +44,8 @@ len_A = quick.action_space.n
 memory_length = 4
 
 #as specified, n is set to 5 (both for target and local Q)
-n = 5
-target_n = 5
+n = 3
+target_n = 3
 
 #learning rate, discount rate, annealling parameter for epsilon tuning 
 alpha = wandb.config.learning_rate
@@ -53,7 +53,7 @@ gamma = 0.95
 
 #How many time steps it will take for epsilon to decay from its ceiling to its floor.
 #Controls how random the model will act, and for how long
-epsilon_decay_rate = 1000000
+epsilon_decay_rate = 200000
 
 
 #directories & paths for storing / saving / visualization
@@ -82,10 +82,10 @@ TMAX = 50000000
 #values of epsilon, and the idea of sampling taken from section 5.1 
 #Asynchronous Methods for Deep Reinforcement Learning, Mnih et al
 def get_epsilon_floor():
-    epsilon_floor = np.array([.1,.01,.5])
-    epsilons = np.array([0.4,0.3,0.3])
-    return np.random.choice(epsilon_floor, 1, p=list(epsilons))[0]
-
+    #epsilon_floor = np.array([.1,.01,.5])
+    #epsilons = np.array([0.4,0.3,0.3])
+    #return np.random.choice(epsilon_floor, 1, p=list(epsilons))[0]
+    return 0.1
 
 def build_graph(len_A):
     # Create shared deep q network
@@ -110,9 +110,18 @@ def build_graph(len_A):
     #cost is defined by the difference between actual reward and predicted reward
     cost = tf.reduce_mean(tf.square(y - action_q_values))
 
+    # Schedule learning rate
+    global_step = tf.Variable(0, trainable=False)
+    learning_rate = tf.compat.v1.train.exponential_decay(
+        alpha,
+        global_step,
+        10,
+        0.96,
+        staircase=True)
+
     #Use an AdamOptmizer with learning rate = alpha
-    optimizer = tf.train.AdamOptimizer(alpha)
-    grad_update = optimizer.minimize(cost, var_list=network_params)
+    optimizer = tf.train.AdamOptimizer(learning_rate)
+    grad_update = optimizer.minimize(cost, var_list=network_params, global_step=global_step)
 
     return s,q_values,st,target_q_values,reset_target_Q_theta,a,y,grad_update
 
@@ -143,51 +152,12 @@ def setup_summaries():
     return temp, update, summ
 
 
-
-def evaluation(session, s,q_values, saver):
-    saver.restore(session, ckpt_to_load)
-    print( "Restored model weights from ", ckpt_to_load)
-    monitor_env = gym.make(game)
-    gym.wrappers.Monitor(monitor_env, './video', force=True)
-
-    # Wrap env with processingWrapper helper class
-    env = processingWrapper(monitor_env, memory_length,r_height,r_width)
-
-    for i_episode in xrange(wandb.config.episodes):
-        s_t = env.initState()
-        r_e = 0
-        done = False
-        while not done:
-            monitor_env.render()
-            readout_t = q_values.eval(session = session, feed_dict = {s : [s_t]})
-            action_index = np.argmax(readout_t)
-            print( "action",action_index)
-            s_t1, r_t, done = env.step(action_index)
-            s_t = s_t1
-            r_e += r_t
-        evaluate(r_e)
-        print( r_e)
-
-        # render gameplay video
-        if (i %50 == 0):
-          mp4list = glob.glob(eval_dir+"/"+experiment+"/eval/*.mp4")
-          if len(mp4list) > 0:
-            print(len(mp4list))
-            mp4 = mp4list[-1]
-            video = io.open(mp4, 'r+b').read()
-            encoded = base64.b64encode(video)
-            # log gameplay video in wandb
-            wandb.log({"gameplays": wandb.Video(mp4, fps=4, format="gif")})
-
-    monitor_env.monitor.close()
-
 #implementation of a async Deep-Q learning agent with multiple threads
 def async_Q_learning(thread_num, env, session,s,q_values,st,target_q_values,reset_target_Q_theta,a,y,grad_update
 , len_A, summary_ops, saver):
 
     # Create environment using helper class processingWrapper to abstract image pre-processing for the model
-
-    env = processingWrapper(env, memory_length,r_height,r_width)
+    env = processingWrapper(env, memory_length,r_height,r_width,thread_num)
 
     #Global time
     global TMAX, T
@@ -250,7 +220,7 @@ def async_Q_learning(thread_num, env, session,s,q_values,st,target_q_values,rese
             target_readout = target_q_values.eval(session = session, feed_dict = {st : [s_t1]})
             if r_t == 0: clipped_r_t = 0
             elif r_t > 0: clipped_r_t = 1
-            else: r_t = -5
+            else: r_t = -1
 
             y_batch.append(clipped_r_t if done else clipped_r_t + gamma * np.max(target_readout) )
             a_batch.append(a_t)
@@ -292,18 +262,18 @@ def async_Q_learning(thread_num, env, session,s,q_values,st,target_q_values,rese
                     session.run(update_ops[i], feed_dict={summary_placeholders[i]:float(stats[i])})
                 print( " \n Thread:", thread_num, "\n T:", T, "\n t:", t, "\n Epsilon:", epsilon, "\n Reward:", r_e, "\n Q_Max: %.4f" % (e_avg_max_Q/float(e_t)), "\n % finished epsilon decay :", t/float(epsilon_decay_rate), "\n--------------------------------\n")
 
-                evaluate(r_e)
-
-                # render gameplay video
-                if (episode %50 == 0):
-                  mp4list = glob.glob('video/*.mp4')
-                  if len(mp4list) > 0:
-                    print(len(mp4list))
-                    mp4 = mp4list[-1]
-                    video = io.open(mp4, 'r+b').read()
-                    encoded = base64.b64encode(video)
-                    # log gameplay video in wandb
-                    wandb.log({"gameplays": wandb.Video(mp4, fps=4, format="gif")})
+                if thread_num == 1:
+                    # render gameplay video
+                    evaluate(r_e)
+                    if (episode %10 == 0):
+                      mp4list = glob.glob('video/*.mp4')
+                      if len(mp4list) > 0:
+                        print(len(mp4list))
+                        mp4 = mp4list[-1]
+                        video = io.open(mp4, 'r+b').read()
+                        encoded = base64.b64encode(video)
+                        # log gameplay video in wandb
+                        wandb.log({"gameplays": wandb.Video(mp4, fps=4, format="gif")})
 
                 break
 
@@ -313,7 +283,6 @@ def train(session, s,q_values,st,target_q_values,reset_target_Q_theta,a,y,grad_u
     # Set up game environments (one per thread)
 
     envs = [gym.make(game) for i in range(n_agents)]
-    gym.wrappers.Monitor(envs[0], './video', force=True)
     
     summary_ops = setup_summaries()
     summary_op = summary_ops[-1]

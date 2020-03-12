@@ -2,17 +2,21 @@ import tensorflow as tf
 from skimage.transform import resize
 from skimage.color import rgb2gray
 import numpy as np
+import cv2
 from collections import deque
+import gym
 
 
 #Wrapper that abstracts the memory/frame pre-processing to simplify main code
 
 class processingWrapper(object):
-    def __init__(self, env, memory_length,h,w):
+    def __init__(self, env, memory_length,h,w,thread_num):
         #intializes the environment.
         #Takes an environment, length of the memory deque, and dimensions(h,w) of resized frame
         #Creates actions from action space, A
 
+        if thread_num == 1:
+            env = gym.wrappers.Monitor(env, './video', force=True)
         self.env = env
 
         self.w = w
@@ -35,7 +39,13 @@ class processingWrapper(object):
 
         Purpose is to remove computational complexity without removing information
         """
-        return resize(rgb2gray(frame), (self.w, self.h))
+        frame = frame[25:,:,:]
+        frame = resize(rgb2gray(frame), (self.w, self.h))
+        frame = frame * 255
+        (thresh, img) = cv2.threshold(frame, 127, 255, cv2.THRESH_BINARY)
+        # Normalize image
+        img = img / 255
+        return img
 
     def initState(self):
 
@@ -46,7 +56,7 @@ class processingWrapper(object):
         x = self.processFrame(x)
 
         #stack of states. Action repeat is 4 as specified in Mni et all 5.1
-        s_t = np.stack((x, x, x, x), axis = 0)
+        s_t = np.stack([x]*self.memory_length, axis = 0)
         
         for i in range(self.memory_length-1):
             self.memory.append(x)
