@@ -18,7 +18,7 @@ import wandb
 # initialize a new wandb run
 wandb.init(project="qualcomm")
 # define hyperparameters
-wandb.config.episodes = 100
+wandb.config.episodes = 20001
 wandb.config.batch_size = 32
 wandb.config.learning_rate = 1e-6
 cumulative_reward = 0
@@ -44,16 +44,17 @@ len_A = quick.action_space.n
 memory_length = 4
 
 #as specified, n is set to 5 (both for target and local Q)
-n = 3
-target_n = 3
+n = 5
+target_n = 5
 
 #learning rate, discount rate, annealling parameter for epsilon tuning 
 alpha = wandb.config.learning_rate
 gamma = 0.95
+beta = 0.05
 
 #How many time steps it will take for epsilon to decay from its ceiling to its floor.
 #Controls how random the model will act, and for how long
-epsilon_decay_rate = 25000
+epsilon_decay_rate = 1000000
 
 
 #directories & paths for storing / saving / visualization
@@ -71,11 +72,10 @@ e_ckpt = 500
 
 
 #set this to the checkpoint to load
-ckpt_to_load ="path/to/recent.ckpt"
+ckpt_to_load = False
 
 #Number of training timesteps
 T = 0
-
 
 TMAX = 50000000
 
@@ -106,15 +106,18 @@ def build_graph(len_A):
     y = tf.placeholder("float", [None])
     action_q_values = tf.reduce_sum(tf.multiply(q_values, a), reduction_indices=1)
 
+    # Entropy loss
+    entropy_loss = -beta*tf.reduce_sum(tf.multiply(a, tf.math.log(a)), reduction_indices=1)
+
     #cost is defined by the difference between actual reward and predicted reward
-    cost = tf.reduce_mean(tf.square(y - action_q_values))
+    cost = tf.reduce_mean(tf.square(y - action_q_values - entropy_loss))
 
     # Schedule learning rate
     global_step = tf.Variable(0, trainable=False)
     learning_rate = tf.compat.v1.train.exponential_decay(
         alpha,
         global_step,
-        10,
+        250,
         0.96,
         staircase=True)
 
@@ -173,6 +176,8 @@ def async_Q_learning(thread_num, env, session,s,q_values,st,target_q_values,rese
 
     # Define epsilon parameters
     epsilon_floor = get_epsilon_floor()
+    if thread_num == 1:
+        epsilon_floor = 0.01
 
     #how randoom the model will be at beginning
     epsilon_ceiling = 1.0
@@ -289,12 +294,14 @@ def train(session, s,q_values,st,target_q_values,reset_target_Q_theta,a,y,grad_u
     summary_op = summary_ops[-1]
 
     # Initialize variables
-
     session.run(tf.global_variables_initializer())
 
     # Initialize target network weights
-
     session.run(reset_target_Q_theta)
+
+    #Restore previous model
+    if ckpt_to_load:
+        saver.restore(session, sess,tf.train.latest_checkpoint(checkpoint_dir))
 
     summary_save_path = summary_dir + "/" + experiment
 
@@ -304,7 +311,7 @@ def train(session, s,q_values,st,target_q_values,reset_target_Q_theta,a,y,grad_u
 
 
     # Start n_agent training threads
-    async_Q_learnings = [threading.Thread(target=async_Q_learning, args=(thread_num, envs[thread_num], session, s,q_values,st,target_q_values,reset_target_Q_theta,a,y,grad_update, 
+    async_Q_learnings = [threading.Thread(target=async_Q_learning, args=(thread_num, envs[thread_num], session, s,q_values,st,target_q_values,reset_target_Q_theta,a,y,grad_update,
                                         len_A, summary_ops, saver)) for thread_num in range(n_agents)]
     for t in async_Q_learnings:
         t.start()
@@ -347,9 +354,9 @@ def evaluate(episodic_reward):
 
   # your models will be evaluated on 100-episode average reward
   # therefore, we stop logging after 100 episodes
-  if (episode > 100):
-    print("Scores from episodes > 100 won't be logged in wandb.")
-    return
+  #if (episode > 100):
+  #  print("Scores from episodes > 100 won't be logged in wandb.")
+  #  return
 
   # log total reward received in this episode to wandb
   wandb.log({'episodic_reward': episodic_reward})

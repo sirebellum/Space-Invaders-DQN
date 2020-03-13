@@ -39,7 +39,7 @@ class processingWrapper(object):
 
         Purpose is to remove computational complexity without removing information
         """
-        frame = frame[25:,:,:]
+        frame = frame[:,:,:]
         frame = resize(rgb2gray(frame), (self.w, self.h))
         frame = frame * 255
         (thresh, img) = cv2.threshold(frame, 127, 255, cv2.THRESH_BINARY)
